@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f5f3ec">
+  <meta name="description" content="Escolha o próximo tema que você quer explorar. Uma votação de ideias, tecnologia e novas possibilidades.">
+  <title>VOTA — Sua próxima descoberta</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/styles.css">
+  <script type="module" src="/app.js"></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Pular para o conteúdo</a>
+  <header class="site-header">
+    <a class="brand" href="/" aria-label="VOTA, início"><span class="brand-mark" aria-hidden="true">v<span>•</span></span>VOTA<span class="brand-dot">.</span></a>
+    <div class="header-note">IDEIAS QUE CONECTAM.<br>ESCOLHAS QUE TRANSFORMAM.</div>
+    <nav aria-label="Navegação principal"><a id="vote-link" href="/">Votação <span aria-hidden="true"><svg class="arrow-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 19 19 5M5 5h14v14"/></svg></span></a><a id="metrics-link" href="/metricas">Métricas <span aria-hidden="true"><svg class="arrow-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 19 19 5M5 5h14v14"/></svg></span></a></nav>
+  </header>
+  <main id="main" tabindex="-1"><div class="initial-loading" role="status">Preparando suas próximas descobertas…</div></main>
+  <footer class="site-footer"><a class="footer-brand" href="/">VOTA.</a><p>O próximo passo começa com a sua escolha.</p><span>FEITO PARA OUVIR VOCÊ <span aria-hidden="true"><svg class="arrow-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 19 19 5M5 5h14v14"/></svg></span></span></footer>
+  <dialog id="vote-dialog" aria-labelledby="dialog-title">
+    <form id="vote-form">
+    <div class="dialog-top"><span class="eyebrow">QUASE LÁ</span><button class="icon-button" id="close-dialog" type="button" aria-label="Fechar confirmação">×</button></div>
+    <div class="dialog-symbol" aria-hidden="true"><svg class="arrow-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 19 19 5M5 5h14v14"/></svg></div>
+    <h2 id="dialog-title">Vamos nessa?</h2><p>Você escolheu</p><strong id="dialog-topic"></strong><p class="muted">Cada matrícula pode confirmar um único tópico, mesmo em outro dispositivo.</p>
+    <div class="matricula-field">
+      <label for="matricula">Matrícula do aluno</label>
+      <input id="matricula" name="matricula" type="text" inputmode="numeric" pattern="[0-9]{5}" minlength="5" maxlength="64" required autocomplete="off" spellcheck="false" placeholder="Ex.: 27250" aria-describedby="matricula-help" title="Informe os 5 dígitos da matrícula">
+      <p id="matricula-help">Informe os 5 dígitos da sua matrícula. Ela não aparece nos resultados.</p>
+    </div>
+    <p id="dialog-error" class="error-text" role="alert"></p>
+    <div class="dialog-actions"><button class="button secondary" id="cancel-vote" type="button">Voltar</button><button class="button primary" id="confirm-vote" type="submit">Confirmar meu voto <span aria-hidden="true"><svg class="arrow-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 19 19 5M5 5h14v14"/></svg></span></button></div>
+    </form>
+  </dialog>
+</body>
+</html>

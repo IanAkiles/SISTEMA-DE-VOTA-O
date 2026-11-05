@@ -90,6 +90,7 @@ $('#vote-form').addEventListener('submit', async event=>{
   try {
     const data = await api('/api/votes',{method:'POST',body:{topicId:selectedId,matricula}});
     voter={hasVoted:true,topicId:data.topicId};
+    $('#vote-form').reset();
     $('#vote-dialog').close(); renderVoting(); $('#voter-status').scrollIntoView({behavior:'smooth',block:'center'});
   } catch (error) {
     $('#dialog-error').textContent=error.message;

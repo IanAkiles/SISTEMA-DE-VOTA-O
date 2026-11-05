@@ -40,7 +40,7 @@ O painel mostra total, líder (ou empate), temas com votos, ranking completo, pe
 
 `data/voting.sqlite3` guarda os votos, identificadores opacos, a chave HMAC privada e sessões. Preserve essa chave junto com a base: recriar/trocar apenas a chave quebra a identificação das matrículas já usadas. Mantenha essa pasta em um **volume persistente**, numa única instância do servidor; múltiplas réplicas com bancos independentes não compartilham os votos. A variável opcional `VOTING_DATA_DIR` altera a pasta dos dados.
 
-Para disponibilizar na internet, use um proxy reverso com **HTTPS** e inicie com `--secure-cookies`. Preserve o cabeçalho Host público e encaminhe as requisições na mesma origem; POST de origens diferentes são recusados. O servidor Python é adequado ao desenvolvimento e a uma votação pequena controlada; operação pública exige supervisão do processo e limites de tráfego na hospedagem. Esta tarefa não publica a aplicação nem envia alterações ao GitHub.
+Para disponibilizar na internet, use um proxy reverso com **HTTPS** e inicie com `--secure-cookies`. Preserve o cabeçalho Host público e encaminhe as requisições na mesma origem; POST de origens diferentes são recusados. O servidor Python é adequado ao desenvolvimento e a uma votação pequena controlada; operação pública exige supervisão do processo e limites de tráfego na hospedagem. Publicar o código no GitHub não inicia o servidor web na internet; a aplicação deve ser executada ou hospedada conforme estas instruções.
 
 Faça backup consistente usando a API de backup do SQLite (não copie apenas o arquivo principal durante gravações WAL):
 

@@ -106,9 +106,22 @@ async function selectAndVote(page, title, matricula) {
   await mobile.getByRole('alert').filter({hasText:/matrícula/}).waitFor();
   assert.equal(await mobile.getByRole('dialog').isVisible(),true);
   assert.equal(await mobile.getByText('Voto registrado. Sua voz faz a diferença!').count(),0);
+  // Mutation callbacks run before the dialog's queued close event: the receipt
+  // must never become observable while the registration field still has data.
+  await mobile.evaluate(()=>{
+    window.receiptClearedRegistration=null;
+    const observer=new MutationObserver(()=>{
+      if(document.querySelector('.success-banner')) {
+        window.receiptClearedRegistration=document.querySelector('#matricula').value==='';
+        observer.disconnect();
+      }
+    });
+    observer.observe(document.querySelector('#main'),{childList:true,subtree:true});
+  });
   await mobile.getByLabel('Matrícula do aluno').fill('00123');
   await mobile.getByRole('button',{name:'Confirmar meu voto'}).click();
   await mobile.getByText('Voto registrado. Sua voz faz a diferença!').waitFor();
+  assert.equal(await mobile.evaluate(()=>window.receiptClearedRegistration),true,'Receipt must appear only after registration is cleared');
   assert.equal(await mobile.locator('#matricula').inputValue(),'','Success must clear registration');
   await otherTab.getByRole('button',{name:'Votar neste tema'}).click();
   await otherTab.getByLabel('Matrícula do aluno').fill('00123');

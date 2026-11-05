@@ -2,7 +2,15 @@
 
 Painel público para escolher um dos **15 tópicos de cursos** da imagem de referência e painel administrativo com métricas reais. Interface em português, responsiva, com busca sem acentos, filtros por área, detalhes, confirmação e recibo do voto.
 
-## Executar
+## Site no GitHub Pages e painel ao vivo
+
+A versão pública usa GitHub Pages para as telas e Supabase para os votos, login por e-mail/senha e atualização por Realtime. O projeto Supabase já está configurado com os dados **públicos** em `pages.public.json`; nenhuma senha ou chave privilegiada pertence ao site.
+
+**Siga [Colocar a votação no ar](docs/PUBLICAR.md)** para aplicar o SQL, autorizar seu usuário e ativar GitHub Pages. A rota do painel publicado é `#metricas`. O site só estará disponível após o workflow terminar e o banco ser preparado.
+
+No modo Supabase, a senha é a do usuário autorizado em Authentication; `data/admin-password` vale somente para a execução local Python abaixo. Os bancos SQLite local e Supabase são independentes: votos anteriores do ambiente local não são enviados automaticamente para a nuvem.
+
+## Executar localmente
 
 Requisito da aplicação: **Python 3.12 ou superior**, com SQLite (biblioteca padrão). Não há pacotes Python/npm para instalar nem etapa de build.
 
@@ -34,7 +42,7 @@ Também é possível fornecer `ADMIN_PASSWORD` pelo gerenciador seguro de variá
 
 A primeira inicialização com esta versão migra o banco automaticamente, em transação, sem apagar votos, timestamps ou credenciais. Votos anteriores à regra por matrícula continuam nas métricas e ficam sem matrícula associada, pois essa informação não foi coletada antes. Esses votos não podem ser associados retroativamente a alunos nem bloquear uma matrícula correspondente. A migração pode ser repetida com segurança.
 
-O painel mostra total, líder (ou empate), temas com votos, ranking completo, percentual do total, distribuição por área e últimos 7 dias que tiveram votos. Os dias e horários seguem Brasília (America/Sao_Paulo); timestamps são armazenados em UTC. Atualização automática a cada 15 segundos enquanto a aba está visível. O CSV protegido exporta os 15 temas, área, total e percentual.
+O painel mostra total, líder (ou empate), temas com votos, ranking completo, percentual do total, distribuição por área e últimos 7 dias que tiveram votos. Os dias e horários seguem Brasília (America/Sao_Paulo); timestamps são armazenados em UTC. No modo local, atualização automática a cada 15 segundos enquanto a aba está visível. No GitHub Pages/Supabase, o painel recebe eventos Realtime e mantém a consulta periódica como recuperação. O CSV protegido exporta os 15 temas, área, total e percentual.
 
 ## Persistência e hospedagem
 

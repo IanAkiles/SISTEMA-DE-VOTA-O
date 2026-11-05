@@ -1,3 +1,4 @@
+import {config} from './config.js';
 import {filterTopics, leaderLabel, percentageLabel, normalizeMatricula} from './model.mjs';
 
 const $ = selector => document.querySelector(selector);
@@ -13,8 +14,16 @@ const areaPaths = {
 };
 function icon(category) { return `<svg viewBox="0 0 26 26" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${areaPaths[category] || areaPaths.Inovação}"/></svg>`; }
 
+let cloudBackendPromise;
+function getCloudBackend() {
+  if (config.provider !== 'supabase') return Promise.resolve(null);
+  cloudBackendPromise ||= import('./supabase-backend.mjs').then(({createSupabaseBackend})=>createSupabaseBackend(config));
+  return cloudBackendPromise;
+}
 class ApiError extends Error { constructor(message, status, data) { super(message); this.status = status; this.data = data; } }
 async function api(path, {method = 'GET', body} = {}) {
+  const cloud = await getCloudBackend();
+  if (cloud) return cloud.request(path,{method,body});
   let response;
   try { response = await fetch(path, {method, credentials:'same-origin', headers:body ? {'Content-Type':'application/json'} : {}, body:body ? JSON.stringify(body) : undefined, signal:AbortSignal.timeout(12000)}); }
   catch { throw new Error('Não foi possível conectar. Confira sua conexão e tente novamente.'); }
@@ -25,9 +34,30 @@ async function api(path, {method = 'GET', body} = {}) {
 }
 
 let topics = [], voter = null, selectedId = null, category = 'Todas', query = '', submitting = false;
-let metricsTimer = null, refreshing = false, adminEpoch = 0, adminActive = false;
-const isAdmin = location.pathname.replace(/\/$/, '') === '/metricas';
-$(isAdmin ? '#metrics-link' : '#vote-link').setAttribute('aria-current','page');
+let metricsTimer = null, refreshing = false, adminEpoch = 0, adminActive = false, metricsRefreshQueued = false;
+let stopMetricsSubscription = null, liveStatus = 'connecting', routeVersion = 0;
+function adminRoute() {return location.hash==='#metricas' || location.pathname.replace(/\/$/,'')==='/metricas';}
+let isAdmin = adminRoute();
+function stopLiveUpdates() {
+  stopMetricsSubscription?.(); stopMetricsSubscription=null;
+  liveStatus='connecting';
+}
+function showLiveStatus() {
+  const label=$('#live-connection');
+  if (label) label.textContent=({connected:'Ao vivo',connecting:'Conectando…',reconnecting:'Reconectando…'})[liveStatus];
+}
+async function startLiveUpdates(epoch) {
+  const cloud = await getCloudBackend();
+  if (!cloud || !adminActive || epoch!==adminEpoch) return;
+  stopLiveUpdates();
+  const cleanup=cloud.subscribeMetrics(
+    ()=>{if(adminActive && epoch===adminEpoch) void refreshMetrics();},
+    status=>{if(adminActive && epoch===adminEpoch) {liveStatus=status;showLiveStatus();}}
+  );
+  if (adminActive && epoch===adminEpoch) stopMetricsSubscription=cleanup;
+  else cleanup();
+}
+
 
 function errorPage(error) {
   main.innerHTML = `<section class="page-error"><span class="eyebrow">OPA, ALGO NÃO CARREGOU</span><h1>Vamos tentar de novo?</h1><p>${escape(error.message)}</p><button class="button primary" id="retry">Tentar novamente <svg class="arrow-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 19 19 5M5 5h14v14"/></svg></button></section>`;
@@ -100,12 +130,13 @@ $('#vote-form').addEventListener('submit', async event=>{
 
 function adminIntro() {return `<div class="admin-intro"><div><span class="eyebrow">PAINEL DE ACOMPANHAMENTO</span><h1>Da escolha<br>à <em>descoberta.</em></h1><p>Cada voto conta uma história. Acompanhe o que move a turma.</p></div><span class="admin-symbol" aria-hidden="true"><svg class="asterisk-icon" viewBox="0 0 28 28" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round" aria-hidden="true"><path d="M14 2v24M3.6 8l20.8 12M3.6 20 24.4 8"/></svg></span></div>`;}
 function renderLogin() {
+  stopLiveUpdates(); metricsRefreshQueued=false;
   adminActive=false; adminEpoch++;
   clearInterval(metricsTimer);
-  main.innerHTML = `<section class="admin-shell">${adminIntro()}<div class="login-layout"><div class="login-note"><span class="eyebrow">ACESSO RESTRITO</span><h2>Uma visão completa.<br>Para quem organiza.</h2><p>Confira os temas mais votados, entenda os interesses da turma e transforme as escolhas em próximos passos.</p><div class="login-note-bottom">RESULTADOS REAIS <span aria-hidden="true"><svg class="arrow-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 19 19 5M5 5h14v14"/></svg></span></div></div><form id="login-form" class="login-form"><div class="login-icon" aria-hidden="true">⌘</div><h2>Entrar nas métricas</h2><p>Use sua senha de administrador para continuar.</p><label for="password">Senha de administrador</label><input id="password" name="password" type="password" autocomplete="current-password" required maxlength="1024" placeholder="Digite sua senha"><p id="login-error" class="error-text" role="alert"></p><button id="login-submit" class="button primary" type="submit">Acessar painel <span aria-hidden="true"><svg class="arrow-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 19 19 5M5 5h14v14"/></svg></span></button><a class="text-link" href="/">← Voltar para a votação</a></form></div></section>`;
+  main.innerHTML = `<section class="admin-shell">${adminIntro()}<div class="login-layout"><div class="login-note"><span class="eyebrow">ACESSO RESTRITO</span><h2>Uma visão completa.<br>Para quem organiza.</h2><p>Confira os temas mais votados, entenda os interesses da turma e transforme as escolhas em próximos passos.</p><div class="login-note-bottom">RESULTADOS REAIS <span aria-hidden="true"><svg class="arrow-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 19 19 5M5 5h14v14"/></svg></span></div></div><form id="login-form" class="login-form"><div class="login-icon" aria-hidden="true">⌘</div><h2>Entrar nas métricas</h2><p>Use sua senha de administrador para continuar.</p>${config.provider==='supabase'?'<label for="email">E-mail de administrador</label><input id="email" name="email" type="email" autocomplete="username" required placeholder="seu@email.com">':''}<label for="password">Senha de administrador</label><input id="password" name="password" type="password" autocomplete="current-password" required maxlength="1024" placeholder="Digite sua senha"><p id="login-error" class="error-text" role="alert"></p><button id="login-submit" class="button primary" type="submit">Acessar painel <span aria-hidden="true"><svg class="arrow-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 19 19 5M5 5h14v14"/></svg></span></button><a class="text-link" href="./">← Voltar para a votação</a></form></div></section>`;
   $('#login-form').addEventListener('submit', async event=>{
     event.preventDefault(); const button=$('#login-submit'); button.disabled=true; $('#login-error').textContent='';
-    try {await api('/api/admin/login',{method:'POST',body:{password:$('#password').value}}); $('#password').value=''; await loadDashboard();}
+    try {await api('/api/admin/login',{method:'POST',body:{password:$('#password').value,...(config.provider==='supabase'?{email:$('#email').value.trim()}:{})}}); $('#password').value=''; await loadDashboard();}
     catch(error) {if($('#login-error')) {$('#login-error').textContent=error.message; button.disabled=false;}}
   });
 }
@@ -115,13 +146,16 @@ function renderDashboard(metrics) {
   const topVotes = Math.max(1,...metrics.topics.map(topic=>topic.votes));
   const activeTopics = metrics.topics.filter(topic=>topic.votes>0).length;
   const dates = new Intl.DateTimeFormat('pt-BR',{day:'2-digit',month:'short',timeZone:'America/Sao_Paulo'});
-  main.innerHTML = `<section class="admin-shell">${adminIntro()}<div class="dashboard-toolbar"><div><span class="status-dot"></span><span id="updated-label" role="status">Atualizado às ${new Intl.DateTimeFormat('pt-BR',{hour:'2-digit',minute:'2-digit',second:'2-digit',timeZone:'America/Sao_Paulo'}).format(new Date(metrics.updatedAt))} · Brasília</span></div><div class="dashboard-actions"><button class="button small secondary" id="refresh">Atualizar ↻</button><a class="button small secondary" id="export-csv" href="/api/admin/export" download="votacao.csv">Exportar CSV ↓</a><button class="button small quiet" id="logout">Sair <svg class="arrow-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 19 19 5M5 5h14v14"/></svg></button></div></div><p id="metrics-error" class="error-text" role="alert"></p><div class="stat-grid"><article class="stat-card"><span class="eyebrow">PARTICIPAÇÃO TOTAL</span><strong id="total-votes">${metrics.totalVotes.toLocaleString('pt-BR')}</strong><span>votos registrados</span><span class="stat-decoration" aria-hidden="true"><svg class="arrow-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 19 19 5M5 5h14v14"/></svg></span></article><article class="stat-card leader-card"><span class="eyebrow">${metrics.leaders.length>1?'DISPUTA EQUILIBRADA':'NO TOPO DAS DESCOBERTAS'}</span><h2 id="leader-name">${escape(leader)}</h2><span>${metrics.totalVotes ? (metrics.leaders.length>1?'Os tópicos líderes têm o mesmo número de votos.':`${metrics.topics.find(t=>t.id===metrics.leaders[0])?.votes || 0} votos no tema mais escolhido`) : 'Os resultados aparecerão com a primeira participação.'}</span></article><article class="stat-card"><span class="eyebrow">INTERESSES EXPLORADOS</span><strong>${activeTopics}<small> / ${metrics.topics.length}</small></strong><span>temas receberam votos</span></article></div><div class="dashboard-grid"><section class="ranking-panel"><div class="panel-heading"><div><span class="eyebrow">01 / DO MAIS VOTADO AO PRÓXIMO</span><h2>Ranking de tópicos</h2></div><span class="panel-icon" aria-hidden="true"><svg class="arrow-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 19 19 5M5 5h14v14"/></svg></span></div>${!metrics.totalVotes?'<p class="empty-note">Ainda não há votos. Compartilhe a página de votação para começar.</p>':''}<ol class="ranking-list">${metrics.topics.map((topic,index)=>`<li class="ranking-row ${areaStyles[topic.category]}"><span class="ranking-position">${String(index+1).padStart(2,'0')}</span><div class="ranking-info"><div class="ranking-title"><strong>${escape(topic.title)}</strong><span>${topic.votes} <span class="muted">${topic.votes===1?'voto':'votos'}</span></span></div><progress class="ranking-track" max="${topVotes}" value="${topic.votes}" aria-label="${escape(topic.title)}: ${topic.votes} votos"></progress><div class="ranking-caption"><span>${escape(topic.category)}</span><span>${percentageLabel(topic.percentage)}</span></div></div></li>`).join('')}</ol></section><aside class="dashboard-aside"><section class="area-panel"><span class="eyebrow">02 / OLHAR POR ÁREA</span><h2>O que conecta<br>a turma?</h2><div class="area-list">${metrics.categories.map(area=>`<div class="area-row ${areaStyles[area.name]}"><span class="area-dot"></span><div><strong>${escape(area.name)}</strong><span>${area.votes} votos</span></div><b>${percentageLabel(area.percentage)}</b></div>`).join('')}</div></section><section class="timeline-panel"><span class="eyebrow">03 / AO LONGO DO TEMPO</span><h2>O movimento<br>das escolhas.</h2>${metrics.timeline.length?`<ul class="timeline-list">${metrics.timeline.slice(-7).map(day=>`<li><time datetime="${escape(day.date)}">${dates.format(new Date(day.date+'T12:00:00Z'))}</time><progress class="timeline-bar" max="${Math.max(...metrics.timeline.map(item=>item.votes))}" value="${day.votes}" aria-label="${escape(day.date)}: ${day.votes} votos"></progress><strong>${day.votes}</strong></li>`).join('')}</ul><p class="muted">Últimos 7 dias com votos.</p>`:'<p class="muted">A história começa no primeiro voto.</p>'}</section><div class="insight-note"><span aria-hidden="true"><svg class="asterisk-icon" viewBox="0 0 28 28" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round" aria-hidden="true"><path d="M14 2v24M3.6 8l20.8 12M3.6 20 24.4 8"/></svg></span><p>Por trás de cada número,<br>uma nova possibilidade.</p></div></aside></div><p class="privacy-note">Atualização automática a cada 15 segundos. Percentuais calculados sobre o total de votos.</p></section>`;
+  main.innerHTML = `<section class="admin-shell">${adminIntro()}<div class="dashboard-toolbar"><div><span class="status-dot"></span><span id="updated-label" role="status">Atualizado às ${new Intl.DateTimeFormat('pt-BR',{hour:'2-digit',minute:'2-digit',second:'2-digit',timeZone:'America/Sao_Paulo'}).format(new Date(metrics.updatedAt))} · Brasília</span>${config.provider==='supabase'?'<span id="live-connection" class="live-connection" role="status"></span>':''}</div><div class="dashboard-actions"><button class="button small secondary" id="refresh">Atualizar ↻</button><a class="button small secondary" id="export-csv" href="/api/admin/export" download="votacao.csv">Exportar CSV ↓</a><button class="button small quiet" id="logout">Sair <svg class="arrow-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 19 19 5M5 5h14v14"/></svg></button></div></div><p id="metrics-error" class="error-text" role="alert"></p><div class="stat-grid"><article class="stat-card"><span class="eyebrow">PARTICIPAÇÃO TOTAL</span><strong id="total-votes">${metrics.totalVotes.toLocaleString('pt-BR')}</strong><span>votos registrados</span><span class="stat-decoration" aria-hidden="true"><svg class="arrow-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 19 19 5M5 5h14v14"/></svg></span></article><article class="stat-card leader-card"><span class="eyebrow">${metrics.leaders.length>1?'DISPUTA EQUILIBRADA':'NO TOPO DAS DESCOBERTAS'}</span><h2 id="leader-name">${escape(leader)}</h2><span>${metrics.totalVotes ? (metrics.leaders.length>1?'Os tópicos líderes têm o mesmo número de votos.':`${metrics.topics.find(t=>t.id===metrics.leaders[0])?.votes || 0} votos no tema mais escolhido`) : 'Os resultados aparecerão com a primeira participação.'}</span></article><article class="stat-card"><span class="eyebrow">INTERESSES EXPLORADOS</span><strong>${activeTopics}<small> / ${metrics.topics.length}</small></strong><span>temas receberam votos</span></article></div><div class="dashboard-grid"><section class="ranking-panel"><div class="panel-heading"><div><span class="eyebrow">01 / DO MAIS VOTADO AO PRÓXIMO</span><h2>Ranking de tópicos</h2></div><span class="panel-icon" aria-hidden="true"><svg class="arrow-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 19 19 5M5 5h14v14"/></svg></span></div>${!metrics.totalVotes?'<p class="empty-note">Ainda não há votos. Compartilhe a página de votação para começar.</p>':''}<ol class="ranking-list">${metrics.topics.map((topic,index)=>`<li class="ranking-row ${areaStyles[topic.category]}"><span class="ranking-position">${String(index+1).padStart(2,'0')}</span><div class="ranking-info"><div class="ranking-title"><strong>${escape(topic.title)}</strong><span>${topic.votes} <span class="muted">${topic.votes===1?'voto':'votos'}</span></span></div><progress class="ranking-track" max="${topVotes}" value="${topic.votes}" aria-label="${escape(topic.title)}: ${topic.votes} votos"></progress><div class="ranking-caption"><span>${escape(topic.category)}</span><span>${percentageLabel(topic.percentage)}</span></div></div></li>`).join('')}</ol></section><aside class="dashboard-aside"><section class="area-panel"><span class="eyebrow">02 / OLHAR POR ÁREA</span><h2>O que conecta<br>a turma?</h2><div class="area-list">${metrics.categories.map(area=>`<div class="area-row ${areaStyles[area.name]}"><span class="area-dot"></span><div><strong>${escape(area.name)}</strong><span>${area.votes} votos</span></div><b>${percentageLabel(area.percentage)}</b></div>`).join('')}</div></section><section class="timeline-panel"><span class="eyebrow">03 / AO LONGO DO TEMPO</span><h2>O movimento<br>das escolhas.</h2>${metrics.timeline.length?`<ul class="timeline-list">${metrics.timeline.slice(-7).map(day=>`<li><time datetime="${escape(day.date)}">${dates.format(new Date(day.date+'T12:00:00Z'))}</time><progress class="timeline-bar" max="${Math.max(...metrics.timeline.map(item=>item.votes))}" value="${day.votes}" aria-label="${escape(day.date)}: ${day.votes} votos"></progress><strong>${day.votes}</strong></li>`).join('')}</ul><p class="muted">Últimos 7 dias com votos.</p>`:'<p class="muted">A história começa no primeiro voto.</p>'}</section><div class="insight-note"><span aria-hidden="true"><svg class="asterisk-icon" viewBox="0 0 28 28" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round" aria-hidden="true"><path d="M14 2v24M3.6 8l20.8 12M3.6 20 24.4 8"/></svg></span><p>Por trás de cada número,<br>uma nova possibilidade.</p></div></aside></div><p class="privacy-note">${config.provider==='supabase'?'Resultados em tempo real, com verificação automática de conexão.':'Atualização automática a cada 15 segundos.'} Percentuais calculados sobre o total de votos.</p></section>`;
+  showLiveStatus();
+  if (config.provider==='supabase') $('#export-csv').addEventListener('click',downloadCloudCsv);
   if (focusId) document.getElementById(focusId)?.focus({preventScroll:true});
   $('#refresh').addEventListener('click',async()=>{await refreshMetrics(); $('#refresh')?.focus();});
-  $('#logout').addEventListener('click',async()=>{const button=$('#logout'); button.disabled=true; adminActive=false; adminEpoch++; clearInterval(metricsTimer); try {await api('/api/admin/logout',{method:'POST'}); renderLogin();}catch(error){adminActive=true; metricsTimer=setInterval(()=>{if(!document.hidden)refreshMetrics();},15000); $('#metrics-error').textContent=error.message;button.disabled=false;}});
+  $('#logout').addEventListener('click',async()=>{const button=$('#logout'); button.disabled=true; adminActive=false; adminEpoch++; stopLiveUpdates(); metricsRefreshQueued=false; clearInterval(metricsTimer); try {await api('/api/admin/logout',{method:'POST'}); renderLogin();}catch(error){adminActive=true; void startLiveUpdates(adminEpoch); metricsTimer=setInterval(()=>{if(!document.hidden)refreshMetrics();},15000); $('#metrics-error').textContent=error.message;button.disabled=false;}});
 }
 async function refreshMetrics() {
-  if(refreshing || !adminActive) return;
+  if(!adminActive) return;
+  if(refreshing) {metricsRefreshQueued=true; return;}
   const epoch = adminEpoch;
   refreshing=true; if($('#refresh')) $('#refresh').setAttribute('aria-busy','true');
   try {
@@ -132,20 +166,44 @@ async function refreshMetrics() {
       if(error.status===401) renderLogin();
       else if($('#metrics-error')) $('#metrics-error').textContent=`${error.message} Os últimos resultados permanecem na tela.`;
     }
-  } finally {refreshing=false;if($('#refresh')) $('#refresh').removeAttribute('aria-busy');}
+  } finally {
+    refreshing=false;if($('#refresh')) $('#refresh').removeAttribute('aria-busy');
+    const replay=metricsRefreshQueued;metricsRefreshQueued=false;
+    if(replay && adminActive) void refreshMetrics();
+  }
 }
 async function loadDashboard() {
   const epoch = ++adminEpoch;
   const metrics = await api('/api/admin/metrics');
   if (epoch !== adminEpoch) return;
   adminActive=true; renderDashboard(metrics);
+  void startLiveUpdates(epoch);
   clearInterval(metricsTimer); metricsTimer=setInterval(()=>{if(!document.hidden)refreshMetrics();},15000);
 }
+async function downloadCloudCsv(event) {
+  event.preventDefault();
+  if (!adminActive) return;
+  const epoch=adminEpoch;
+  try {
+    const cloud=await getCloudBackend();
+    const csv=await cloud.exportCsv();
+    if(!adminActive || epoch!==adminEpoch) return;
+    const url=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'}));
+    const anchor=document.createElement('a');anchor.href=url;anchor.download='votacao.csv';
+    document.body.append(anchor);anchor.click();anchor.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);
+  } catch(error) {if(adminActive && epoch===adminEpoch) {if(error.status===401 || error.status===403)renderLogin();else if($('#metrics-error'))$('#metrics-error').textContent=error.message;}}
+}
 async function init() {
+  const route = ++routeVersion;
+  stopLiveUpdates();clearInterval(metricsTimer);adminActive=false;adminEpoch++;metricsRefreshQueued=false;
+  isAdmin=adminRoute();
+  for(const link of [$('#metrics-link'),$('#vote-link')])link.removeAttribute('aria-current');
+  $(isAdmin?'#metrics-link':'#vote-link').setAttribute('aria-current','page');
   main.innerHTML='<div class="initial-loading" role="status">Preparando suas próximas descobertas…</div>';
   try {
-    if(isAdmin) {const session=await api('/api/admin/session'); if(session.authenticated)await loadDashboard();else renderLogin();}
-    else {const [catalogue,status]=await Promise.all([api('/api/topics'),api('/api/voter')]);topics=catalogue.topics;voter=status;renderVoting();}
-  } catch(error) {errorPage(error);}
+    if(isAdmin) {const session=await api('/api/admin/session'); if(route!==routeVersion)return; if(session.authenticated)await loadDashboard();else renderLogin();}
+    else {const [catalogue,status]=await Promise.all([api('/api/topics'),api('/api/voter')]);if(route!==routeVersion)return;topics=catalogue.topics;voter=status;renderVoting();}
+  } catch(error) {if(route===routeVersion)errorPage(error);}
 }
+window.addEventListener('hashchange',()=>{if(adminRoute()!==isAdmin) void init();});
 init();

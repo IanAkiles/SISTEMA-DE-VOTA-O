@@ -32,6 +32,10 @@ async function selectAndVote(page, title, matricula) {
   await page.goto(url);
   await page.getByRole('heading',{name:/Qual tema desperta/}).waitFor();
   assert.equal(await page.getByRole('radio').count(),15);
+  await page.goto(url+'/#metricas');
+  await page.getByRole('heading',{name:'Entrar nas métricas'}).waitFor();
+  await page.getByRole('link',{name:'Votação',exact:true}).click();
+  await page.getByRole('heading',{name:/Qual tema desperta/}).waitFor();
   mkdirSync(join(root,'test-results'),{recursive:true});
   await page.screenshot({path:join(root,'test-results','votacao-desktop.png'),fullPage:true});
   await page.getByRole('searchbox',{name:'Buscar temas'}).fill('robotica');

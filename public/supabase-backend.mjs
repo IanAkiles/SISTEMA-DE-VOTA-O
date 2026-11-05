@@ -1,10 +1,18 @@
 import {createClient} from '@supabase/supabase-js';
 import {normalizeMatricula} from './model.mjs';
+import {buildRecoveryRedirect} from './recovery.mjs';
 
 const unavailable = 'Não foi possível acessar os dados. Confira sua conexão e tente novamente.';
 const failure = (message,status) => Object.assign(new Error(message),{status});
 
 function translatedError(error, context) {
+  if (error.status === 429) return failure('Muitas tentativas. Aguarde um pouco e tente novamente.',429);
+  if (context === 'recover') {
+    if ([400,422].includes(error.status)) return failure('Informe um email válido para recuperar sua senha.',400);
+    return failure(unavailable,503);
+  }
+  if (context === 'password' && [400,422].includes(error.status)) return failure('Não foi possível usar esta senha. Escolha outra senha e tente novamente.',400);
+  if (context === 'password' && error.status === 403) return failure('O link expirou. Solicite um novo email de recuperação.',401);
   if (error.code === 'P0001' && error.message === 'VOTE_ALREADY_RECORDED') {
     return failure('Esta matrícula já registrou um voto.',409);
   }
@@ -65,6 +73,24 @@ export function createSupabaseBackend(config, options = {}) {
     try { await client.auth.signOut({scope:'local'}); } catch { /* Authorization still stays closed. */ }
   }
 
+  async function ensureRecoveryInitialized() {
+    let initialized;
+    try {initialized=await client.auth.initialize();}
+    catch {invalidateAdmin();throw failure(unavailable,503);}
+    if (initialized.error) {
+      invalidateAdmin();
+      // Redirect/PKCE errors carry a synthetic 500 in the SDK, even when the
+      // server explicitly reports an expired link in the URL fragment.
+      const callbackError=['AuthImplicitGrantRedirectError','AuthPKCEGrantCodeExchangeError'].includes(initialized.error.name);
+      if (!callbackError && (initialized.error.name === 'AuthRetryableFetchError' || initialized.error.status >= 500)) {
+        throw failure(unavailable,503);
+      }
+      // A failed callback leaves an older session in SDK storage. That session
+      // must never authorize changing the password through the invalid link.
+      throw failure('O link expirou ou é inválido. Solicite um novo email de recuperação.',401);
+    }
+  }
+
   async function verifyAdmin(epoch = authEpoch, duringLogin = false) {
     if(epoch!==authEpoch) throw failure('Sua sessão expirou. Entre novamente para continuar.',401);
     if(pendingAuth && !duringLogin) return false;
@@ -107,6 +133,43 @@ export function createSupabaseBackend(config, options = {}) {
       return {...receipt};
     }
     if (method === 'GET' && path === '/api/admin/session') return {authenticated:await verifyAdmin()};
+    if (method === 'POST' && path === '/api/admin/recover') {
+      if (!body || typeof body.email !== 'string' || body.email.trim().length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(body.email.trim())) {
+        throw failure('Informe um email válido para recuperar sua senha.',400);
+      }
+      let redirectTo;
+      try {redirectTo=buildRecoveryRedirect(options.locationUrl ?? globalThis.location.href);}
+      catch {throw failure(unavailable,503);}
+      await sdk(()=>client.auth.resetPasswordForEmail(body.email.trim(),{redirectTo}),'recover');
+      return {sent:true};
+    }
+    if (method === 'GET' && path === '/api/admin/recovery-session') {
+      const epoch=authEpoch;
+      if (pendingAuth) return {authenticated:false};
+      await ensureRecoveryInitialized();
+      if (epoch !== authEpoch || pendingAuth) return {authenticated:false};
+      const {session}=await sdk(()=>client.auth.getSession());
+      return {authenticated:epoch === authEpoch && Boolean(session)};
+    }
+    if (method === 'POST' && path === '/api/admin/password') {
+      if (!body || typeof body.password !== 'string' || body.password.length < 8 || body.password.length > 1024) {
+        throw failure('Escolha uma senha com entre 8 e 1024 caracteres.',400);
+      }
+      const epoch=++authEpoch;
+      invalidateAdmin();
+      return queueAuth(async()=>{
+        if (epoch !== authEpoch) throw failure('O link expirou. Solicite um novo email de recuperação.',401);
+        await ensureRecoveryInitialized();
+        if (epoch !== authEpoch) throw failure('O link expirou. Solicite um novo email de recuperação.',401);
+        const {session}=await sdk(()=>client.auth.getSession());
+        if (!session || epoch !== authEpoch) throw failure('O link expirou. Solicite um novo email de recuperação.',401);
+        await sdk(()=>client.auth.updateUser({password:body.password}),'password');
+        // The password has changed. Local cleanup still runs if remote token
+        // revocation fails, without reporting the completed update as a failure.
+        await discardSession();
+        return {updated:true};
+      });
+    }
     if (method === 'POST' && path === '/api/admin/login') {
       if (!body || typeof body.email !== 'string' || !body.email.trim() || typeof body.password !== 'string' || !body.password || body.password.length > 1024) {
         throw failure('Informe um email e uma senha válidos.',400);

@@ -1,3 +1,5 @@
+import {isRecoveryLocation} from './recovery.mjs';
+import {mountRecoveryRequest,mountRecoveryPassword} from './recovery-ui.mjs';
 import {config} from './config.js';
 import {filterTopics, leaderLabel, percentageLabel, normalizeMatricula} from './model.mjs';
 
@@ -37,7 +39,10 @@ let topics = [], voter = null, selectedId = null, category = 'Todas', query = ''
 let metricsTimer = null, refreshing = false, adminEpoch = 0, adminActive = false, metricsRefreshQueued = false;
 let stopMetricsSubscription = null, liveStatus = 'connecting', routeVersion = 0;
 function adminRoute() {return location.hash==='#metricas' || location.pathname.replace(/\/$/,'')==='/metricas';}
-let isAdmin = adminRoute();
+let recoveryActive=config.provider==='supabase' && isRecoveryLocation(location.href);
+const recoveryHasError=()=>{const params=new URLSearchParams(location.hash.slice(1));return params.has('error') || params.has('error_code');};
+let recoveryExpired=recoveryHasError();
+let isAdmin = adminRoute() || recoveryActive;
 function stopLiveUpdates() {
   stopMetricsSubscription?.(); stopMetricsSubscription=null;
   liveStatus='connecting';
@@ -129,16 +134,40 @@ $('#vote-form').addEventListener('submit', async event=>{
 });
 
 function adminIntro() {return `<div class="admin-intro"><div><span class="eyebrow">PAINEL DE ACOMPANHAMENTO</span><h1>Da escolha<br>à <em>descoberta.</em></h1><p>Cada voto conta uma história. Acompanhe o que move a turma.</p></div><span class="admin-symbol" aria-hidden="true"><svg class="asterisk-icon" viewBox="0 0 28 28" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round" aria-hidden="true"><path d="M14 2v24M3.6 8l20.8 12M3.6 20 24.4 8"/></svg></span></div>`;}
-function renderLogin() {
+function renderLogin(notice='') {
   stopLiveUpdates(); metricsRefreshQueued=false;
   adminActive=false; adminEpoch++;
   clearInterval(metricsTimer);
-  main.innerHTML = `<section class="admin-shell">${adminIntro()}<div class="login-layout"><div class="login-note"><span class="eyebrow">ACESSO RESTRITO</span><h2>Uma visão completa.<br>Para quem organiza.</h2><p>Confira os temas mais votados, entenda os interesses da turma e transforme as escolhas em próximos passos.</p><div class="login-note-bottom">RESULTADOS REAIS <span aria-hidden="true"><svg class="arrow-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 19 19 5M5 5h14v14"/></svg></span></div></div><form id="login-form" class="login-form"><div class="login-icon" aria-hidden="true">⌘</div><h2>Entrar nas métricas</h2><p>Use sua senha de administrador para continuar.</p>${config.provider==='supabase'?'<label for="email">E-mail de administrador</label><input id="email" name="email" type="email" autocomplete="username" required placeholder="seu@email.com">':''}<label for="password">Senha de administrador</label><input id="password" name="password" type="password" autocomplete="current-password" required maxlength="1024" placeholder="Digite sua senha"><p id="login-error" class="error-text" role="alert"></p><button id="login-submit" class="button primary" type="submit">Acessar painel <span aria-hidden="true"><svg class="arrow-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 19 19 5M5 5h14v14"/></svg></span></button><a class="text-link" href="./">← Voltar para a votação</a></form></div></section>`;
+  main.innerHTML = `<section class="admin-shell">${adminIntro()}<div class="login-layout"><div class="login-note"><span class="eyebrow">ACESSO RESTRITO</span><h2>Uma visão completa.<br>Para quem organiza.</h2><p>Confira os temas mais votados, entenda os interesses da turma e transforme as escolhas em próximos passos.</p><div class="login-note-bottom">RESULTADOS REAIS <span aria-hidden="true"><svg class="arrow-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 19 19 5M5 5h14v14"/></svg></span></div></div><form id="login-form" class="login-form"><div class="login-icon" aria-hidden="true">⌘</div><h2>Entrar nas métricas</h2><p>Use sua senha de administrador para continuar.</p>${notice?`<p class="recovery-status" role="status">${escape(notice)}</p>`:''}${config.provider==='supabase'?'<label for="email">E-mail de administrador</label><input id="email" name="email" type="email" autocomplete="username" required placeholder="seu@email.com">':''}<label for="password">Senha de administrador</label><input id="password" name="password" type="password" autocomplete="current-password" required maxlength="1024" placeholder="Digite sua senha"><p id="login-error" class="error-text" role="alert"></p><button id="login-submit" class="button primary" type="submit">Acessar painel <span aria-hidden="true"><svg class="arrow-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 19 19 5M5 5h14v14"/></svg></span></button>${config.provider==='supabase'?'<button class="text-link recovery-back" id="forgot-password" type="button">Esqueci minha senha</button>':''}<a class="text-link" href="./">← Voltar para a votação</a></form></div></section>`;
+  $('#forgot-password')?.addEventListener('click',()=>showRecoveryRequest($('#email').value));
   $('#login-form').addEventListener('submit', async event=>{
-    event.preventDefault(); const button=$('#login-submit'); button.disabled=true; $('#login-error').textContent='';
-    try {await api('/api/admin/login',{method:'POST',body:{password:$('#password').value,...(config.provider==='supabase'?{email:$('#email').value.trim()}:{})}}); $('#password').value=''; await loadDashboard();}
-    catch(error) {if($('#login-error')) {$('#login-error').textContent=error.message; button.disabled=false;}}
+    event.preventDefault();
+    const form=event.currentTarget, route=routeVersion;
+    const button=form.querySelector('#login-submit'),password=form.querySelector('#password'),errorLabel=form.querySelector('#login-error');
+    const isCurrent=()=>form.isConnected && route===routeVersion;
+    button.disabled=true;errorLabel.textContent='';
+    const body={password:password.value,...(config.provider==='supabase'?{email:form.querySelector('#email').value.trim()}:{})};
+    try {
+      await api('/api/admin/login',{method:'POST',body});
+      if(!isCurrent())return;
+      password.value='';await loadDashboard();
+    } catch(error) {if(isCurrent()){errorLabel.textContent=error.message;button.disabled=false;}}
   });
+}
+function recoveryLogin(notice='') {
+  recoveryActive=false;recoveryExpired=false;routeVersion++;
+  const target=new URL('./',location.href);target.hash='metricas';
+  history.replaceState(null,'',target.href);isAdmin=true;
+  $('#vote-link').removeAttribute('aria-current');$('#metrics-link').setAttribute('aria-current','page');
+  renderLogin(notice);
+}
+function showRecoveryRequest(email='') {
+  stopLiveUpdates();clearInterval(metricsTimer);adminActive=false;adminEpoch++;metricsRefreshQueued=false;
+  const route=++routeVersion;
+  mountRecoveryRequest({container:main,api,introHtml:adminIntro(),email,isCurrent:()=>route===routeVersion,onBack:()=>recoveryLogin()});
+}
+async function showRecoveryPassword(route) {
+  await mountRecoveryPassword({container:main,api,introHtml:adminIntro(),expired:recoveryExpired,isCurrent:()=>route===routeVersion,onRequest:()=>showRecoveryRequest(),onSuccess:()=>recoveryLogin('Senha atualizada. Entre com a nova senha.')});
 }
 function renderDashboard(metrics) {
   const focusId = main.contains(document.activeElement) ? document.activeElement.id : null;
@@ -196,14 +225,28 @@ async function downloadCloudCsv(event) {
 async function init() {
   const route = ++routeVersion;
   stopLiveUpdates();clearInterval(metricsTimer);adminActive=false;adminEpoch++;metricsRefreshQueued=false;
-  isAdmin=adminRoute();
+  isAdmin=adminRoute() || recoveryActive;
   for(const link of [$('#metrics-link'),$('#vote-link')])link.removeAttribute('aria-current');
   $(isAdmin?'#metrics-link':'#vote-link').setAttribute('aria-current','page');
   main.innerHTML='<div class="initial-loading" role="status">Preparando suas próximas descobertas…</div>';
   try {
-    if(isAdmin) {const session=await api('/api/admin/session'); if(route!==routeVersion)return; if(session.authenticated)await loadDashboard();else renderLogin();}
+    if(recoveryActive) {await showRecoveryPassword(route);}
+    else if(isAdmin) {const session=await api('/api/admin/session'); if(route!==routeVersion)return; if(session.authenticated)await loadDashboard();else renderLogin();}
     else {const [catalogue,status]=await Promise.all([api('/api/topics'),api('/api/voter')]);if(route!==routeVersion)return;topics=catalogue.topics;voter=status;renderVoting();}
   } catch(error) {if(route===routeVersion)errorPage(error);}
 }
-window.addEventListener('hashchange',()=>{if(adminRoute()!==isAdmin) void init();});
+window.addEventListener('hashchange',()=>{
+  if(config.provider==='supabase' && isRecoveryLocation(location.href)) {
+    recoveryActive=true;recoveryExpired=recoveryExpired || recoveryHasError();void init();
+  } else if(recoveryActive && !location.hash) {
+    // Supabase consumes the token fragment; keep its recovery screen visible.
+  } else if(recoveryActive && location.hash==='#metricas') {
+    recoveryActive=false;void init();
+  } else if(adminRoute()!==isAdmin) void init();
+});
+$('#vote-link').addEventListener('click',event=>{
+  if(!recoveryActive)return;
+  event.preventDefault();recoveryActive=false;recoveryExpired=false;
+  history.replaceState(null,'',new URL('./',location.href).href);void init();
+});
 init();

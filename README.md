@@ -24,6 +24,10 @@ A página de votação fica em `/`; o painel de métricas fica em `/metricas`, n
 
 ### Senha administrativa
 
+No site publicado, use o e-mail/senha do usuário autorizado no Supabase. Se o e-mail de recuperação abrir localhost, configure **Authentication → URL Configuration** com o endereço público do site e solicite um novo link pelo botão **Esqueci minha senha**. O [guia de publicação](docs/PUBLICAR.md#recuperação-de-senha-e-links-que-abrem-localhost) informa os endereços e o procedimento completo.
+
+As instruções abaixo sobre arquivo de senha se aplicam ao modo Python local.
+
 Uma senha aleatória é criada em **`data/admin-password`**, com permissão de leitura apenas para o proprietário. Consulte esse arquivo localmente para entrar no painel. O arquivo, o banco e os cookies nunca são enviados ao Git. Não compartilhe a senha com os participantes.
 
 Também é possível fornecer `ADMIN_PASSWORD` pelo gerenciador seguro de variáveis da hospedagem. Quando presente, ela substitui a senha do arquivo. Para trocar a senha local, pare o servidor, edite `data/admin-password` sem espaços nas extremidades e reinicie; as sessões existentes são invalidadas. Se estiver usando `ADMIN_PASSWORD`, altere essa variável. Sessões administrativas duram até 8 horas, têm cookies HttpOnly/SameSite e são revogadas ao sair. Tentativas incorretas de login são limitadas.

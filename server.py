@@ -27,6 +27,8 @@ STATIC_FILES = {
     "/styles.css": ("styles.css", "text/css; charset=utf-8"),
     "/app.js": ("app.js", "application/javascript; charset=utf-8"),
     "/config.js": ("config.js", "application/javascript; charset=utf-8"),
+    "/recovery.mjs": ("recovery.mjs", "application/javascript; charset=utf-8"),
+    "/recovery-ui.mjs": ("recovery-ui.mjs", "application/javascript; charset=utf-8"),
     "/supabase-backend.mjs": ("supabase-backend.mjs", "application/javascript; charset=utf-8"),
     "/model.mjs": ("model.mjs", "application/javascript; charset=utf-8"),
     "/favicon.svg": ("favicon.svg", "image/svg+xml"),

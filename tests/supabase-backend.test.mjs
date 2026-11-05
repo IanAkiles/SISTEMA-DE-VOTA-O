@@ -38,6 +38,8 @@ async function fixture(overrides = {}) {
       return reply({access_token:token(),refresh_token:'fixture-refresh',expires_in:3600,token_type:'bearer',user:{id:'11111111-1111-4111-8111-111111111111',email:'admin@example.test',aud:'authenticated',role:'authenticated'}});
     }
     if (call.path === '/auth/v1/logout') return reply(undefined,204);
+    if (call.path === '/auth/v1/recover') return reply({});
+    if (call.path === '/auth/v1/user' && call.method === 'PUT') return reply({id:'11111111-1111-4111-8111-111111111111',email:'admin@example.test',aud:'authenticated',role:'authenticated'});
     const name = call.path.split('/').at(-1);
     if (state.errors[name]) return reply(state.errors[name],state.errors[name].httpStatus || 400);
     if (name === 'get_voting_topics') return reply({topics:[topic]});
@@ -48,7 +50,7 @@ async function fixture(overrides = {}) {
   };
   const client = createClient(config.supabaseUrl,config.supabasePublishableKey,{global:{fetch},auth:{storage:memoryStorage(),autoRefreshToken:false,persistSession:true,detectSessionInUrl:false}});
   const storage = memoryStorage();
-  const backend = createSupabaseBackend(config,{client,storage});
+  const backend = createSupabaseBackend(config,{client,storage,...(overrides.locationUrl ? {locationUrl:overrides.locationUrl} : {})});
   const login = () => backend.request('/api/admin/login',{method:'POST',body:{email:'admin@example.test',password:'fixture-password'}});
   return {backend,client,calls,state,storage,login,fetch,createSupabaseBackend};
 }
@@ -353,4 +355,221 @@ test('cliente padrão usa SDK oficial e sessionStorage somente para recibo', asy
   assert.deepEqual(await backend.request('/api/topics'),{topics:[topic]});
   await backend.request('/api/votes',{method:'POST',body:{topicId:topic.id,matricula:'00123'}});
   assert.deepEqual([...storage.entries.values()].map(JSON.parse),[{topicId:topic.id}]);
+});
+
+
+const recoveryUrl='https://example.github.io/SISTEMA-DE-VOTA-O/?old=private#metricas';
+const sendRecovery=(backend,email='admin@example.test')=>backend.request('/api/admin/recover',{method:'POST',body:{email}});
+const setPassword=(backend,password='new-fixture-password')=>backend.request('/api/admin/password',{method:'POST',body:{password}});
+async function signInForRecovery(client) {
+  const {error}=await client.auth.signInWithPassword({email:'admin@example.test',password:'fixture-password'});
+  assert.equal(error,null);
+}
+
+test('recuperação usa SDK real, email normalizado e redirect na raiz Pages sem hash', async()=>{
+  const f=await fixture({locationUrl:recoveryUrl});
+  assert.deepEqual(await sendRecovery(f.backend,'  admin@example.test  '),{sent:true});
+  assert.equal(f.calls.length,1);
+  assert.equal(f.calls[0].path,'/auth/v1/recover');
+  assert.equal(f.calls[0].body.email,'admin@example.test');
+  assert.equal(new URLSearchParams(f.calls[0].query).get('redirect_to'),'https://example.github.io/SISTEMA-DE-VOTA-O/?recovery=1');
+  assert.ok(!JSON.stringify(f.calls[0].body).includes('private'));
+  assert.deepEqual(await sendRecovery(f.backend,'unknown@example.test'),{sent:true});
+});
+
+test('recuperação consulta location global apenas no endpoint novo', async t=>{
+  const original=Object.getOwnPropertyDescriptor(globalThis,'location');
+  Object.defineProperty(globalThis,'location',{configurable:true,value:{href:'http://127.0.0.1:8000/#metricas'}});
+  t.after(()=>{if(original)Object.defineProperty(globalThis,'location',original);else delete globalThis.location;});
+  const f=await fixture();
+  assert.deepEqual(await sendRecovery(f.backend),{sent:true});
+  assert.equal(new URLSearchParams(f.calls[0].query).get('redirect_to'),'http://127.0.0.1:8000/?recovery=1');
+});
+
+test('email inválido falha antes da rede e erros Auth não expõem detalhes privados', async()=>{
+  const f=await fixture({locationUrl:recoveryUrl});
+  for(const email of [null,12345,'','   ','without-at','admin@','two@@example.test','has space@example.test']) {
+    await statusOf(sendRecovery(f.backend,email),400,/email|e-mail/i);
+  }
+  assert.equal(f.calls.length,0);
+  for(const [remoteStatus,expected] of [[400,400],[429,429],[503,503]]) {
+    f.state.respond=(call,reply)=>call.path==='/auth/v1/recover' ? reply({code:'private-error',msg:'private-email-token'},remoteStatus) : undefined;
+    const error=await statusOf(sendRecovery(f.backend),expected);
+    assert.ok(!JSON.stringify(error).includes('private'));
+    assert.ok(!error.message.includes('private'));
+  }
+});
+
+test('falha de transporte em recuperação retorna 503 neutro', async()=>{
+  const f=await fixture({locationUrl:recoveryUrl,respond:call=>{if(call.path==='/auth/v1/recover')throw new DOMException('private-token','AbortError');}});
+  const error=await statusOf(sendRecovery(f.backend),503,/Não foi possível/);
+  assert.ok(!error.message.includes('private'));
+});
+
+test('sessão de recuperação retorna somente booleano sem RPC de admin ou dados Auth', async()=>{
+  const f=await fixture({admin:false});
+  assert.deepEqual(await f.backend.request('/api/admin/recovery-session'),{authenticated:false});
+  await signInForRecovery(f.client);
+  f.calls.length=0;
+  assert.deepEqual(await f.backend.request('/api/admin/recovery-session'),{authenticated:true});
+  assert.equal(f.calls.length,0);
+  assert.ok((await f.client.auth.getSession()).data.session);
+});
+
+test('alteração de senha exige sessão e valida 8 a 1024 caracteres sem enviar senha inválida', async()=>{
+  const f=await fixture();
+  await statusOf(setPassword(f.backend),401,/expir|link|sessão/i);
+  await signInForRecovery(f.client);
+  f.calls.length=0;
+  for(const password of [null,12345,'','short7','x'.repeat(1025)]) await statusOf(setPassword(f.backend,password),400,/senha/i);
+  assert.equal(f.calls.length,0);
+  assert.deepEqual(await setPassword(f.backend,'x'.repeat(1024)),{updated:true});
+  assert.equal(f.calls.find(call=>call.path==='/auth/v1/user').body.password.length,1024);
+});
+
+test('consulta de recuperação iniciada antes de logout não devolve sessão tardia', async()=>{
+  const f=await fixture();
+  await signInForRecovery(f.client);
+  const session=f.backend.request('/api/admin/recovery-session');
+  const logout=f.backend.request('/api/admin/logout',{method:'POST'});
+  assert.deepEqual(await session,{authenticated:false});
+  await logout;
+});
+
+test('usuário não admin pode definir própria senha e termina sem sessão ou permissão', async()=>{
+  const f=await fixture({admin:false});
+  await signInForRecovery(f.client);
+  f.calls.length=0;
+  assert.deepEqual(await setPassword(f.backend,'eight888'),{updated:true});
+  assert.equal(f.calls[0].path,'/auth/v1/user');
+  assert.equal(f.calls[0].method,'PUT');
+  assert.equal(f.calls[0].body.password,'eight888');
+  assert.equal(f.calls.at(-1).path,'/auth/v1/logout');
+  assert.equal(new URLSearchParams(f.calls.at(-1).query).get('scope'),'local');
+  assert.ok(!f.calls.some(call=>call.path.startsWith('/rest/')));
+  assert.equal((await f.client.auth.getSession()).data.session,null);
+  assert.deepEqual(await f.backend.request('/api/admin/recovery-session'),{authenticated:false});
+  await statusOf(f.backend.request('/api/admin/metrics'),401);
+});
+
+test('sucesso na senha continua sucesso se revogação remota falhar após limpeza local', async()=>{
+  const f=await fixture({respond:(call,reply)=>call.path==='/auth/v1/logout' ? reply({msg:'private-offline'},503) : undefined});
+  await signInForRecovery(f.client);
+  assert.deepEqual(await setPassword(f.backend),{updated:true});
+  assert.equal((await f.client.auth.getSession()).data.session,null);
+});
+
+test('erros de updateUser são traduzidos sem senha ou payload remoto', async()=>{
+  const f=await fixture();
+  await signInForRecovery(f.client);
+  for(const [remoteStatus,expected] of [[400,400],[401,401],[429,429],[503,503]]) {
+    f.state.respond=(call,reply)=>call.path==='/auth/v1/user' ? reply({code:'private-error',msg:'private-password-token'},remoteStatus) : undefined;
+    const error=await statusOf(setPassword(f.backend),expected);
+    assert.ok(!error.message.includes('private'));
+    assert.equal(error.data,undefined);
+  }
+});
+
+test('troca de senha fecha assinaturas imediatamente e eventos tardios permanecem fechados', async()=>{
+  let releaseUpdate, updateStarted;
+  const gate=new Promise(resolve=>{releaseUpdate=resolve;});
+  const started=new Promise(resolve=>{updateStarted=resolve;});
+  const f=await fixture({respond:async call=>{if(call.path==='/auth/v1/user'){updateStarted();await gate;}}});
+  await f.login();
+  const wire=realtimeWire(f.client), changes=[];
+  f.backend.subscribeMetrics(()=>changes.push('changed'));
+  const password=setPassword(f.backend);
+  assert.equal(wire.removed.length,1);
+  await started;
+  assert.deepEqual(await f.backend.request('/api/admin/session'),{authenticated:false});
+  const logout=f.backend.request('/api/admin/logout',{method:'POST'});
+  for(const channel of wire.channels){channel.event({});channel.status('SUBSCRIBED');}
+  releaseUpdate();
+  assert.deepEqual(await password,{updated:true});
+  assert.deepEqual(await logout,{authenticated:false});
+  assert.deepEqual(changes,[]);
+  assert.equal((await f.client.auth.getSession()).data.session,null);
+});
+
+test('logout pendente impede updateUser posterior de reutilizar sessão antiga', async()=>{
+  let releaseLogout, logoutStarted;
+  const gate=new Promise(resolve=>{releaseLogout=resolve;});
+  const started=new Promise(resolve=>{logoutStarted=resolve;});
+  const f=await fixture({respond:async call=>{if(call.path==='/auth/v1/logout'){logoutStarted();await gate;}}});
+  await signInForRecovery(f.client);
+  const logout=f.backend.request('/api/admin/logout',{method:'POST'});
+  await started;
+  const passwordResult=setPassword(f.backend).then(value=>({value}),error=>({error}));
+  releaseLogout();
+  await logout;
+  assert.equal((await passwordResult).error?.status,401);
+  assert.ok(!f.calls.some(call=>call.path==='/auth/v1/user'));
+  assert.deepEqual(await f.backend.request('/api/admin/recovery-session'),{authenticated:false});
+});
+
+async function failedCallbackFixture(t,status=401,callbackUrl='https://example.github.io/repo/?recovery=1#access_token=invalid-callback&refresh_token=invalid-refresh&expires_in=3600&token_type=bearer&type=recovery',authOptions={}) {
+  const f=await fixture({respond:(call,reply)=>call.path==='/auth/v1/user' && call.method==='GET' ? reply({code:'bad_jwt',msg:'private-invalid-callback'},status) : undefined});
+  await signInForRecovery(f.client);
+  const previousSession=(await f.client.auth.getSession()).data.session;
+  const {createClient}=await import('@supabase/supabase-js');
+  const authStorage=memoryStorage();
+  const storageKey=`recovery-callback-fixture-${Math.random().toString(36).slice(2)}`;
+  authStorage.setItem(storageKey,JSON.stringify(previousSession));
+  const saved=new Map(['window','document','BroadcastChannel'].map(key=>[key,Object.getOwnPropertyDescriptor(globalThis,key)]));
+  const restore=()=>{for(const [key,descriptor] of saved){if(descriptor)Object.defineProperty(globalThis,key,descriptor);else delete globalThis[key];}};
+  let client;
+  try {
+    Object.defineProperty(globalThis,'window',{configurable:true,value:{location:new URL(callbackUrl)}});
+    Object.defineProperty(globalThis,'document',{configurable:true,value:{visibilityState:'hidden'}});
+    Object.defineProperty(globalThis,'BroadcastChannel',{configurable:true,value:undefined});
+    client=createClient(config.supabaseUrl,config.supabasePublishableKey,{global:{fetch:f.fetch},auth:{storage:authStorage,storageKey,autoRefreshToken:false,persistSession:true,detectSessionInUrl:true,...authOptions}});
+    const initialized=await client.auth.initialize();
+    assert.ok(initialized.error,'SDK deve detectar callback inválido de verdade');
+  } finally {restore();}
+  t.after(()=>client?.auth.dispose());
+  assert.ok((await client.auth.getSession()).data.session,'SDK preserva a sessão anterior, reproduzindo o bug');
+  return {...f,client,backend:f.createSupabaseBackend(config,{client,storage:memoryStorage()})};
+}
+
+test('callback inválido não aceita sessão anterior nem permite trocar senha dessa conta', async t=>{
+  const f=await failedCallbackFixture(t);
+  const sessionError=await statusOf(f.backend.request('/api/admin/recovery-session'),401,/link|recuperação|expir/i);
+  assert.ok(!sessionError.message.includes('private'));
+  await statusOf(setPassword(f.backend),401,/link|recuperação|expir/i);
+  assert.ok(!f.calls.some(call=>call.path==='/auth/v1/user' && call.method==='PUT'));
+  assert.ok(!f.calls.some(call=>call.path.startsWith('/rest/')));
+});
+
+test('endpoint de senha recusa callback inválido mesmo sem consulta prévia da sessão', async t=>{
+  const f=await failedCallbackFixture(t);
+  await statusOf(setPassword(f.backend),401,/link|recuperação|expir/i);
+  assert.ok(!f.calls.some(call=>call.path==='/auth/v1/user' && call.method==='PUT'));
+});
+
+test('falha de rede ao inicializar callback retorna 503 sem usar sessão anterior', async t=>{
+  const f=await failedCallbackFixture(t,503);
+  await statusOf(f.backend.request('/api/admin/recovery-session'),503,/Não foi possível/);
+  await statusOf(setPassword(f.backend),503,/Não foi possível/);
+  assert.ok(!f.calls.some(call=>call.path==='/auth/v1/user' && call.method==='PUT'));
+});
+
+
+test('hash otp_expired usa erro de link 401 apesar do status 500 sintético do SDK', async t=>{
+  const f=await failedCallbackFixture(t,401,'https://example.github.io/repo/?recovery=1#error=access_denied&error_code=otp_expired&error_description=private-expired-link');
+  const initialized=await f.client.auth.initialize();
+  assert.equal(initialized.error.name,'AuthImplicitGrantRedirectError');
+  assert.equal(initialized.error.status,500);
+  await statusOf(f.backend.request('/api/admin/recovery-session'),401,/link|expir/i);
+  await statusOf(setPassword(f.backend),401,/link|expir/i);
+  assert.ok(!f.calls.some(call=>call.path==='/auth/v1/user' && call.method==='PUT'));
+});
+
+test('callback incompatível com PKCE também é link inválido e não erro de rede', async t=>{
+  const f=await failedCallbackFixture(t,401,undefined,{flowType:'pkce'});
+  const initialized=await f.client.auth.initialize();
+  assert.equal(initialized.error.name,'AuthPKCEGrantCodeExchangeError');
+  assert.equal(initialized.error.status,500);
+  await statusOf(f.backend.request('/api/admin/recovery-session'),401,/link|expir/i);
+  await statusOf(setPassword(f.backend),401,/link|expir/i);
+  assert.ok(!f.calls.some(call=>call.path==='/auth/v1/user' && call.method==='PUT'));
 });

@@ -18,11 +18,33 @@ Também existe a migração inicial `supabase/migrations/20261105000000_voting.s
 
 1. Em **Authentication → Users → Add user**, crie seu usuário com **seu e-mail e uma senha forte**. Confirme o e-mail conforme as opções do painel. Não envie a senha pelo chat nem a coloque no GitHub.
 2. Abra [`supabase/admin.example.sql`](../supabase/admin.example.sql).
-3. Troque somente `admin@example.invalid` pelo e-mail que você acabou de cadastrar.
+3. Confira o valor de `v_email`: ele deve ser o e-mail que você acabou de cadastrar. Se ainda houver um endereço de exemplo, substitua-o pelo seu.
 4. Execute esse script no **SQL Editor**. Ele concede acesso ao usuário existente, sem publicar a senha.
 5. Se não for usar outros cadastros, desative o cadastro público em **Authentication → Sign In / Providers**.
 
 Uma conta do Supabase Auth sem essa autorização não vê o painel nem os totais. Os alunos não precisam de conta ou e-mail: informam apenas a matrícula de cinco dígitos.
+
+## Recuperação de senha e links que abrem localhost
+
+No Supabase, vá em **Authentication → URL Configuration** e salve:
+
+- **Site URL:** `https://ianakiles.github.io/SISTEMA-DE-VOTA-O/`
+- **Redirect URLs:** `https://ianakiles.github.io/SISTEMA-DE-VOTA-O/` e `https://ianakiles.github.io/SISTEMA-DE-VOTA-O/?recovery=1`
+
+Não use `localhost:3000` para o site publicado. O endereço de retorno utiliza query `?recovery=1` para preservar o fragmento de autenticação gerado pelo Supabase.
+
+Depois que o deploy da recuperação estiver concluído:
+
+1. Abra o [painel de métricas](https://ianakiles.github.io/SISTEMA-DE-VOTA-O/#metricas).
+2. Clique **Esqueci minha senha**, informe o e-mail do usuário de Authentication e clique **Enviar link de recuperação**.
+3. Abra o **e-mail mais recente**. O site deve mostrar **Definir nova senha**.
+4. Digite e confirme uma senha com pelo menos 8 caracteres. Depois, entre com essa nova senha.
+
+Os links antigos não são corrigidos pela mudança do Site URL: solicite outro e-mail após salvar a configuração. Um link inválido, expirado ou já usado oferece a ação **Solicitar novo link**; não reutiliza outra sessão salva no navegador para trocar a senha.
+
+A senha atual não pode ser visualizada. A recuperação altera somente a senha da própria conta autenticada e não concede acesso administrativo: esse acesso continua exigindo o script `admin.example.sql`. A senha local de `data/admin-password` pertence apenas ao modo Python.
+
+Não envie links completos do e-mail, tokens ou senhas pelo chat e não os coloque no repositório. A chave publishable do site não autoriza alterar o Site URL do projeto; essa configuração deve ser feita no seu painel Supabase.
 
 ## 3. Ativar GitHub Pages
 

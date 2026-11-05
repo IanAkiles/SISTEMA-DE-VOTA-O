@@ -61,6 +61,8 @@ No desenvolvimento os testes usam dados temporários. A implantação de produç
 
 ## Verificação técnica
 
+Use Node.js 24+ (versão indicada em `.nvmrc`), a mesma versão usada pelo workflow do GitHub.
+
 ```bash
 npm ci
 npm test

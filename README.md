@@ -77,7 +77,7 @@ python3 -m unittest discover -s tests -v
 node --test --test-isolation=none tests/model.test.mjs
 ```
 
-O segundo comando usa Node.js 22+ apenas para testar a apresentação. Não é necessário para executar a aplicação. `--test-isolation=none` evita a restrição de subprocessos do sandbox desta máquina.
+Use Node.js 24+ para os testes JavaScript e o build do GitHub Pages; a versão está indicada em `.nvmrc` e é lida pelo workflow. O modo Python local não precisa de Node para executar a aplicação. `--test-isolation=none` exige a versão atual do runtime.
 
 Teste completo de navegador (opcional; Playwright e Chromium já disponíveis neste ambiente):
 

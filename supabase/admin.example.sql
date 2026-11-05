@@ -7,7 +7,7 @@
 BEGIN;
 DO $administrator$
 DECLARE
-    v_email constant text := 'admin@example.invalid';
+    v_email constant text := 'akilesian424@gmail.com';
     v_user_id uuid;
     v_matches bigint;
 BEGIN

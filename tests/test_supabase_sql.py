@@ -7,6 +7,7 @@ unavailable the integration class is explicitly skipped, never reported passed.
 import concurrent.futures
 import json
 import os
+import re
 from pathlib import Path
 import shutil
 import subprocess
@@ -250,13 +251,19 @@ class SupabaseSQLTests(unittest.TestCase):
 
     def test_admin_example_requires_existing_auth_user_and_is_idempotent(self):
         self.assertTrue(ADMIN_EXAMPLE.is_file(), "Administrator enrollment SQL has not been implemented")
-        self.sql("DELETE FROM voting_private.administrators")
+        # The owner edits v_email when configuring the project. Exercise that
+        # exact artifact against disposable Auth users instead of replacing a
+        # hard-coded example address that may no longer be present.
+        self.sql("DELETE FROM voting_private.administrators; DELETE FROM auth.users")
         self.assertEqual(self.value("SELECT public.is_voting_admin()", "authenticated", ADMIN_UID), "f")
         example = ADMIN_EXAMPLE.read_text()
+        match = re.search(r"\bv_email\s+constant\s+text\s*:=\s*'((?:''|[^'])*)'", example, re.IGNORECASE)
+        self.assertIsNotNone(match, "Administrator enrollment needs a configured v_email literal")
+        configured_email = match.group(1).replace("''", "'")
         self.assert_error(self.sql(example, check=False), "P0001", "ADMIN_USER_NOT_FOUND")
-        configured = example.replace("admin@example.invalid", "admin@example.test")
-        self.sql(configured)
-        self.sql(configured)
+        self.sql("INSERT INTO auth.users (id,email) VALUES (" + literal(ADMIN_UID) + "," + literal(configured_email) + ")")
+        self.sql(example)
+        self.sql(example)
         self.assertEqual(self.value("SELECT public.is_voting_admin()", "authenticated", ADMIN_UID), "t")
         self.assertEqual(self.value("SELECT count(*) FROM voting_private.administrators"), "1")
 

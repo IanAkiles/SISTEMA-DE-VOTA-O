@@ -78,10 +78,11 @@ Testes automatizados usam bancos e credenciais temporários, separados de `data/
 
 ```bash
 python3 -m unittest discover -s tests -v
-node --test --test-isolation=none tests/model.test.mjs
+npm ci
+npm test
 ```
 
-Use Node.js 24+ para os testes JavaScript e o build do GitHub Pages; a versão está indicada em `.nvmrc` e é lida pelo workflow. O modo Python local não precisa de Node para executar a aplicação. `--test-isolation=none` exige a versão atual do runtime.
+Use Node.js 24+ para os testes JavaScript e o build do GitHub Pages; a versão está indicada em `.nvmrc` e é lida pelo workflow. O modo Python local não precisa de Node para executar a aplicação. `npm test` roda toda a suíte JavaScript, incluindo recuperação de senha e integração do build.
 
 Teste completo de navegador (opcional; Playwright e Chromium já disponíveis neste ambiente):
 
